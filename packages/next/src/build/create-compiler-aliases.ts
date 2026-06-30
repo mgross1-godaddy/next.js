@@ -540,6 +540,84 @@ export function createVendoredReactAliases(
   return alias
 }
 
+// ─── React externalization helpers ──────────────────────────────────────────
+
+export type ReactExternalCanonicalExport =
+  | 'react'
+  | 'react/jsx-runtime'
+  | 'react/jsx-dev-runtime'
+  | 'react-dom'
+  | 'react-dom/client'
+  | 'scheduler'
+
+export interface ReactExternalRequestEntry {
+  request: string
+  canonicalExport: ReactExternalCanonicalExport
+}
+
+/**
+ * All absolute request specifiers that the `externalizeReact` externals handler
+ * must intercept, for a given bundled React channel.
+ *
+ * Covers both bare names (from user code) and post-alias compiled paths (from
+ * react-dom's hardcoded `require("next/dist/compiled/react…")`), plus scheduler
+ * which is a peer dependency of react-dom/client.
+ */
+export function getReactExternalRequestPaths(
+  bundledReactChannel: BundledReactChannel
+): ReactExternalRequestEntry[] {
+  return [
+    { request: 'react',                                                           canonicalExport: 'react' },
+    { request: `next/dist/compiled/react${bundledReactChannel}`,                 canonicalExport: 'react' },
+    { request: 'react/jsx-runtime',                                               canonicalExport: 'react/jsx-runtime' },
+    { request: `next/dist/compiled/react${bundledReactChannel}/jsx-runtime`,     canonicalExport: 'react/jsx-runtime' },
+    { request: 'react/jsx-dev-runtime',                                           canonicalExport: 'react/jsx-dev-runtime' },
+    { request: `next/dist/compiled/react${bundledReactChannel}/jsx-dev-runtime`, canonicalExport: 'react/jsx-dev-runtime' },
+    { request: 'react-dom',                                                       canonicalExport: 'react-dom' },
+    { request: `next/dist/compiled/react-dom${bundledReactChannel}`,             canonicalExport: 'react-dom' },
+    { request: 'react-dom/client',                                                canonicalExport: 'react-dom/client' },
+    { request: `next/dist/compiled/react-dom${bundledReactChannel}/client`,      canonicalExport: 'react-dom/client' },
+    { request: 'scheduler',                                                       canonicalExport: 'scheduler' },
+    { request: 'next/dist/compiled/scheduler',                                    canonicalExport: 'scheduler' },
+  ]
+}
+
+export interface ReactExternalRelativeEntry {
+  /** The relative specifier as it appears in the require() call. */
+  request: string
+  /** Substring that must appear in the issuer context path to narrow scope. */
+  contextSubstring: string
+  canonicalExport: ReactExternalCanonicalExport
+}
+
+/**
+ * Relative specifiers that appear inside Next.js's vendored React shim files,
+ * e.g. `react/index.js` doing `require('./cjs/react.production.js')`.
+ *
+ * These must be matched with a context check (issuer dir contains
+ * `contextSubstring`) because the relative path alone is not unique.
+ * Covers both production and development builds.
+ */
+export function getReactExternalRelativePaths(
+  bundledReactChannel: BundledReactChannel
+): ReactExternalRelativeEntry[] {
+  const ch = bundledReactChannel
+  return [
+    { request: './cjs/react.production.js',             contextSubstring: `compiled/react${ch}`,       canonicalExport: 'react' },
+    { request: './cjs/react.development.js',            contextSubstring: `compiled/react${ch}`,       canonicalExport: 'react' },
+    { request: './cjs/react-jsx-runtime.production.js', contextSubstring: `compiled/react${ch}`,       canonicalExport: 'react/jsx-runtime' },
+    { request: './cjs/react-jsx-runtime.development.js',contextSubstring: `compiled/react${ch}`,       canonicalExport: 'react/jsx-runtime' },
+    { request: './cjs/react-dom.production.js',         contextSubstring: `compiled/react-dom${ch}`,   canonicalExport: 'react-dom' },
+    { request: './cjs/react-dom.development.js',        contextSubstring: `compiled/react-dom${ch}`,   canonicalExport: 'react-dom' },
+    { request: './cjs/react-dom-client.production.js',  contextSubstring: `compiled/react-dom${ch}`,   canonicalExport: 'react-dom/client' },
+    { request: './cjs/react-dom-client.development.js', contextSubstring: `compiled/react-dom${ch}`,   canonicalExport: 'react-dom/client' },
+    { request: './cjs/scheduler.production.js',         contextSubstring: 'compiled/scheduler',         canonicalExport: 'scheduler' },
+    { request: './cjs/scheduler.development.js',        contextSubstring: 'compiled/scheduler',         canonicalExport: 'scheduler' },
+  ]
+}
+
+// ─── end React externalization helpers ──────────────────────────────────────
+
 // Insert aliases for Next.js stubs of fetch, object-assign, and url
 // Keep in sync with insert_optimized_module_aliases in import_map.rs
 export function getOptimizedModuleAliases(): CompilerAliases {

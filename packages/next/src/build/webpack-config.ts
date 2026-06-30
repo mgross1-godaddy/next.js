@@ -80,7 +80,10 @@ import {
   createVendoredReactAliases,
   createNextApiEsmAliases,
   createAppRouterApiAliases,
+  getReactExternalRequestPaths,
+  getReactExternalRelativePaths,
 } from './create-compiler-aliases'
+import type { ReactExternalCanonicalExport } from './create-compiler-aliases'
 import { hasCustomExportOutput } from '../export/utils'
 import { CssChunkingPlugin } from './webpack/plugins/css-chunking-plugin'
 import {
@@ -114,6 +117,16 @@ const EXTERNAL_PACKAGES = JSON5.parse(
 
 const DEFAULT_TRANSPILED_PACKAGES =
   require('../lib/default-transpiled-packages.json') as string[]
+
+/** Window global name for each React canonical export (externalizeReact: 'window'). */
+const REACT_WINDOW_GLOBALS: Record<ReactExternalCanonicalExport, string> = {
+  react:                  'React',
+  'react/jsx-runtime':    'ReactJsxRuntime',
+  'react/jsx-dev-runtime':'ReactJsxDevRuntime',
+  'react-dom':            'ReactDOM',
+  'react-dom/client':     'ReactDOMClient',
+  scheduler:              'Scheduler',
+}
 
 if (parseInt(React.version) < 18) {
   throw new Error('Next.js requires react >= 18.2.0 to be installed.')
@@ -991,6 +1004,14 @@ export default async function getBaseWebpackConfig(
       )
     )
 
+  // Pre-compute react external path lists for externalizeReact (client only).
+  const reactExternalPaths = config.experimental.externalizeReact
+    ? getReactExternalRequestPaths(bundledReactChannel)
+    : []
+  const reactExternalRelativePaths = config.experimental.externalizeReact
+    ? getReactExternalRelativePaths(bundledReactChannel)
+    : []
+
   let webpackConfig: webpack.Configuration = {
     parallelism: getParallelism(),
     ...(isNodeServer ? { externalsPresets: { node: true } } : {}),
@@ -1002,6 +1023,53 @@ export default async function getBaseWebpackConfig(
           // bundles in case a user imported types and it wasn't removed
           // TODO: should we warn/error for this instead?
           [
+            // externalizeReact: intercept all React requests before anything else.
+            ...(isClient && config.experimental.externalizeReact
+              ? [
+                  (
+                    {
+                      context,
+                      request,
+                    }: { context?: string; request?: string },
+                    callback: (
+                      err?: Error | null,
+                      result?: string,
+                      type?: string
+                    ) => void
+                  ) => {
+                    if (!request) return callback()
+                    const mode = config.experimental.externalizeReact
+                    const entry = reactExternalPaths.find(
+                      (p) => p.request === request
+                    )
+                    if (entry) {
+                      return mode === 'window'
+                        ? callback(
+                            null,
+                            REACT_WINDOW_GLOBALS[entry.canonicalExport],
+                            'window'
+                          )
+                        : callback(null, entry.canonicalExport, 'module')
+                    }
+                    const rel = reactExternalRelativePaths.find(
+                      (p) =>
+                        p.request === request &&
+                        context !== undefined &&
+                        context.includes(p.contextSubstring)
+                    )
+                    if (rel) {
+                      return mode === 'window'
+                        ? callback(
+                            null,
+                            REACT_WINDOW_GLOBALS[rel.canonicalExport],
+                            'window'
+                          )
+                        : callback(null, rel.canonicalExport, 'module')
+                    }
+                    callback()
+                  },
+                ]
+              : []),
             'next',
             ...(isEdgeServer
               ? [
@@ -2347,6 +2415,19 @@ export default async function getBaseWebpackConfig(
 
   if (isClient || isEdgeServer) {
     webpack5Config.output.enabledLibraryTypes = ['assign']
+  }
+
+  // externalizeReact: 'module' emits ESM import statements for React.
+  // Requires outputModule and the 'module' library type to be enabled.
+  if (isClient && config.experimental.externalizeReact === 'module') {
+    webpack5Config.experiments = {
+      ...webpack5Config.experiments,
+      outputModule: true,
+    }
+    webpack5Config.output!.enabledLibraryTypes = [
+      ...(webpack5Config.output!.enabledLibraryTypes ?? []),
+      'module',
+    ]
   }
 
   // This enables managedPaths for all node_modules
