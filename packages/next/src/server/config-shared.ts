@@ -634,6 +634,14 @@ export interface ExperimentalConfig {
   gzipSize?: boolean
   craCompat?: boolean
   esmExternals?: boolean | 'loose'
+  /**
+   * Externalize React for client browser bundles (webpack mode only).
+   * Server-side React (SSR/RSC) always uses the vendored copy.
+   *
+   * 'window' — UMD globals. Load <script src> UMDs in layout before framework chunks.
+   * 'module' — ESM imports. Add <script type="importmap"> as first child of <head>.
+   */
+  externalizeReact?: 'window' | 'module'
   fullySpecified?: boolean
   urlImports?: NonNullable<webpack.Configuration['experiments']>['buildHttp']
   swcTraceProfiling?: boolean
