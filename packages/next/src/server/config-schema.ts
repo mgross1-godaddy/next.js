@@ -245,6 +245,7 @@ export const experimentalSchema = {
   cacheComponents: z.boolean().optional(),
   inlineCss: z.boolean().optional(),
   esmExternals: z.union([z.boolean(), z.literal('loose')]).optional(),
+  externalizeReact: z.union([z.literal('window'), z.literal('module')]).optional(),
   serverActions: z
     .object({
       bodySizeLimit: zSizeLimit.optional(),
