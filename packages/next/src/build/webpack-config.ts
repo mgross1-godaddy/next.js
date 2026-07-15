@@ -991,6 +991,52 @@ export default async function getBaseWebpackConfig(
       )
     )
 
+  // ─── externalizeReact: Design 2 ─────────────────────────────────────────────
+  // ReactNormalizerPlugin taps normalModuleFactory.hooks.beforeResolve to rewrite
+  // compiled React paths (next/dist/compiled/react-experimental, etc.) to bare
+  // specifiers before the externals check fires in hooks.factorize. Static
+  // externals objects then match bare specifiers only — no callback needed.
+  class ReactNormalizerPlugin {
+    private readonly _map: Map<string, string>
+    constructor(map: Map<string, string>) {
+      this._map = map
+    }
+    apply(compiler: webpack.Compiler) {
+      if (compiler.name !== 'client') return
+      const map = this._map
+      compiler.hooks.normalModuleFactory.tap('ReactNormalizerPlugin', (nmf) => {
+        nmf.hooks.beforeResolve.tap(
+          'ReactNormalizerPlugin',
+          (resolveData: { request: string }) => {
+            const bare = map.get(resolveData.request)
+            if (bare !== undefined) resolveData.request = bare
+          }
+        )
+      })
+    }
+  }
+  const reactWindowExternals: Record<string, string> = {
+    react: 'window React',
+    'react/jsx-runtime': 'window ReactJsxRuntime',
+    'react/jsx-dev-runtime': 'window ReactJsxDevRuntime',
+    'react-dom': 'window ReactDOM',
+    'react-dom/client': 'window ReactDOMClient',
+    scheduler: 'window Scheduler',
+  }
+  const reactModuleExternals: Record<string, string> = {
+    react: 'module react',
+    'react/jsx-runtime': 'module react/jsx-runtime',
+    'react/jsx-dev-runtime': 'module react/jsx-dev-runtime',
+    'react-dom': 'module react-dom',
+    'react-dom/client': 'module react-dom/client',
+    scheduler: 'module scheduler',
+  }
+  const reactExternals =
+    config.experimental.externalizeReact === 'module'
+      ? reactModuleExternals
+      : reactWindowExternals
+  // ─── end externalizeReact ────────────────────────────────────────────────────
+
   let webpackConfig: webpack.Configuration = {
     parallelism: getParallelism(),
     ...(isNodeServer ? { externalsPresets: { node: true } } : {}),
@@ -1002,6 +1048,9 @@ export default async function getBaseWebpackConfig(
           // bundles in case a user imported types and it wasn't removed
           // TODO: should we warn/error for this instead?
           [
+            ...(isClient && config.experimental.externalizeReact
+              ? [reactExternals]
+              : []),
             'next',
             ...(isEdgeServer
               ? [
@@ -2347,6 +2396,34 @@ export default async function getBaseWebpackConfig(
 
   if (isClient || isEdgeServer) {
     webpack5Config.output.enabledLibraryTypes = ['assign']
+  }
+
+  if (isClient && config.experimental.externalizeReact) {
+    const ch = bundledReactChannel
+    webpack5Config.plugins!.push(
+      new ReactNormalizerPlugin(
+        new Map([
+          [`next/dist/compiled/react${ch}`, 'react'],
+          [`next/dist/compiled/react${ch}/jsx-runtime`, 'react/jsx-runtime'],
+          [`next/dist/compiled/react${ch}/jsx-dev-runtime`, 'react/jsx-dev-runtime'],
+          [`next/dist/compiled/react-dom${ch}`, 'react-dom'],
+          [`next/dist/compiled/react-dom${ch}/client`, 'react-dom/client'],
+          ['next/dist/compiled/scheduler', 'scheduler'],
+          ['next/dist/compiled/scheduler-experimental', 'scheduler'],
+        ])
+      )
+    )
+  }
+
+  if (isClient && config.experimental.externalizeReact === 'module') {
+    webpack5Config.experiments = {
+      ...webpack5Config.experiments,
+      outputModule: true,
+    }
+    webpack5Config.output!.enabledLibraryTypes = [
+      ...(webpack5Config.output!.enabledLibraryTypes ?? []),
+      'module',
+    ]
   }
 
   // This enables managedPaths for all node_modules
